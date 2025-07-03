@@ -119,7 +119,8 @@ class VMwareTask:
                     beginTime=time_from,
                     endTime=now
                 ),
-                maxCount=limit
+                # Request more events than needed to ensure we get enough after sorting
+                maxCount=limit * 2  # Get more events to sort from
             )
 
             # Query events
@@ -128,9 +129,15 @@ class VMwareTask:
             if not events:
                 return []
 
+            # Sort events by creation time (newest first)
+            sorted_events = sorted(events, key=lambda x: x.createdTime, reverse=True)
+            
+            # Take only the requested number of events
+            latest_events = sorted_events[:limit]
+
             # Format events
             formatted_events = []
-            for event in events:
+            for event in latest_events:
                 try:
                     timestamp = event.createdTime.strftime("%Y-%m-%d %H:%M:%S UTC")
                     user_info = f" (by {event.userName})" if hasattr(event, 'userName') and event.userName else ""
@@ -263,58 +270,5 @@ def get_vm_events_by_name(vm_name: str, host: str, user: str, password: str, day
     except Exception as e:
         return f"❌ Error retrieving events for VM '<b>{vm_name}</b>': {str(e)}"
     
-    finally:
-        vc_client.disconnect()
-
-
-def get_vm_events_by_keyword(keyword: str, host: str, user: str, password: str, days: int = 7, limit: int = 10) -> str:
-    """Search for VMs by keyword and return their events"""
-    if len(keyword) < 4:
-        return "🔒 Keyword must be at least 4 characters to avoid excessive matches."
-
-    if days < 1 or days > 30:
-        return "🔒 Days must be between 1 and 30."
-
-    vc_client = VCenterClient(host, user, password)
-    try:
-        service_instance = vc_client.get_instance()
-        all_vms = VMwareTask.vcenter_list_all_vm(service_instance)
-        matched_vms = [name for name in all_vms if keyword.lower() in name.lower()]
-
-        if not matched_vms:
-            return f"❌ No VM found matching the keyword: <b>{keyword}</b>"
-
-        if len(matched_vms) > 5:
-            return f"🔒 Too many VMs matched ({len(matched_vms)}). Please use a more specific keyword. Found: {', '.join(matched_vms[:10])}{'...' if len(matched_vms) > 10 else ''}"
-
-        results = []
-        for vm_name in matched_vms:
-            events = VMwareTask.get_vm_events(service_instance, vm_name, days, limit)
-            
-            if events is None:
-                results.append(f"⚠️ Could not retrieve events for VM: {vm_name}")
-                continue
-            
-            if not events:
-                results.append(f"<div style='margin-top:10px;'><b>{vm_name}</b>: No events in the last {days} day(s)</div>")
-                continue
-
-            # Format events for this VM
-            vm_events_html = []
-            vm_events_html.append(f"<div style='margin-top:15px;'>")
-            vm_events_html.append(f"<b>📋 {vm_name}</b> (Last {days} day(s), {len(events)} events)<br>")
-            
-            for event in events[:limit]:  # Limit events per VM
-                vm_events_html.append(f"<div style='margin-left:10px; margin-bottom:5px; font-size:0.9em;'>")
-                vm_events_html.append(f"• <small>{event['timestamp']}</small> - {event['event_type']}")
-                if event['user']:
-                    vm_events_html.append(f" {event['user']}")
-                vm_events_html.append(f"</div>")
-            
-            vm_events_html.append(f"</div><hr>")
-            results.append(''.join(vm_events_html))
-
-        return '\n'.join(results).strip()
-
     finally:
         vc_client.disconnect()
